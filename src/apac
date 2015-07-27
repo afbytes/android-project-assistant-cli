@@ -1,0 +1,428 @@
+#!/bin/bash
+# Copyright (C) 2015 Konca Fung
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+## Functions
+error_exit() { # $1-integer_exit_code, #2-string_error_message
+	echo "** Error: $2"
+	exit $1
+}
+
+show_usage() {
+    echo "== Android Project Assistant Command-line (apac) -- version 0.1 =="
+    echo "usage: $(basename $0) [-h | --help] <command> [<args>]"
+    echo ""
+cat << __EOF
+Commands:
+  help          Show this message
+  clean (cl)    Clean temporary or project files etc
+  list (ls)     Find files of specified types
+  migrate (mg)  Migrate legacy project to Android Studio format or more
+__EOF
+}
+
+## ensures command exist
+if [ -z "$1" ] ; then
+    show_usage
+    exit 1
+fi
+
+show_list_help() {
+    echo "$(basename $0) list - List the files in specified types in CURRENT and SUB directories."
+    echo ""
+    echo "Usage: apac list <-ajrbh>"
+    echo "  -a   APK files"
+    echo "  -j   JAR files"
+    echo "  -r   AAR files"
+    echo "  -b   Bundle files, including APK, AAR, JAR files"
+    echo "  -h   Help, show this message"
+}
+
+show_clean_help() {
+    echo "$(basename $0) clean - Clean the files in specified types in CURRENT and SUB directories."
+    echo ""
+cat << __EOF
+Usage: apac clean <-bceswTyh>
+  -b   Build temporary files, including:
+          bin/, gen/, build/
+  -c   Cache files, including:
+          .gradle/
+  -e   Eclipse project files and build files, including:
+          project.properties, local.properties,
+          .project, .classpath, .settings/,
+          bin/, gen/
+  -s   Android Studio project files and build files, including:
+          *.iml, local.properties, .idea/,
+          build/, .gradle/
+  -w   Gradle Wrapper files, including:
+          gradle/ in current directory
+  -T   Total, means **ALL** the directories and files listed above.
+  -y   Answer and skip the confirmation.
+  -h   Help, show this message
+__EOF
+
+    return 0
+}
+## Commands -- all skip command in opts; and exit by itself
+cmd_help() {
+    show_usage
+    exit 0
+}
+
+cmd_clean() {
+    if [ -z "$1" ] ; then
+        show_clean_help
+        exit 1
+    fi
+
+    # ensure it is Android project
+    if [ ! -f "build.gradle" ] && [ ! -f "AndroidManifest.xml" ] ; then
+        error_exit 1 "it seems not an Android project."
+    fi
+
+    local D_BIN="bin"
+    local D_GEN="gen"
+    local D_BUILD="build"
+    local D_DOT_SETTINGS=".settings"
+    local D_DOT_IDEA=".idea"
+    local D_DOT_GRADLE=".gradle"
+    local F_PROJ_PROP="project.properties"
+    local F_LOCAL_PROP="local.properties"
+    local F_DOT_PROJECT=".project"
+    local F_DOT_CLASSPATH=".classpath"
+    local F_STAR_DOT_IML="*.iml"
+    local F_GRADLEW_UNIX="gradlew"
+    local F_GRADLEW_BAT="gradlew.bat"
+
+    declare -a flags_f_array=("" "" "" "" "" "" "" "") # enough size
+    declare -a flags_d_array=("" "" "" "" "" "" "" "") # enough size
+
+    local flag_remove_gradle=""
+    local flag_skip_confirm=""
+    local OPTIND opt
+    while getopts "bceswTyh" opt; do
+        case "$opt" in
+        b) #Build
+            flags_d_array[0]=${D_BIN}
+            flags_d_array[1]=${D_GEN}
+            flags_d_array[2]=${D_BUILD}
+            ;;
+        c) #Cache
+            flags_d_array[0]=${D_DOT_GRADLE}
+            ;;
+        e) #Eclipse
+            flags_d_array[0]=${D_BIN}
+            flags_d_array[1]=${D_GEN}
+            flags_d_array[2]=${D_DOT_SETTINGS}
+            flags_f_array[0]=${F_PROJ_PROP}
+            flags_f_array[1]=${F_LOCAL_PROP}
+            flags_f_array[2]=${F_DOT_PROJECT}
+            flags_f_array[3]=${F_DOT_CLASSPATH}
+            ;;
+        s) #Studio
+            flags_d_array[0]=${D_BUILD}
+            flags_d_array[1]=${D_DOT_IDEA}
+            flags_d_array[2]=${D_DOT_GRADLE}
+            flags_f_array[0]=${F_STAR_DOT_IML}
+            flags_f_array[1]=${F_LOCAL_PROP}
+            ;;
+        w) #Gradle Wrapper
+            flags_d_array[0]=${D_DOT_GRADLE}
+            flags_f_array[0]=${F_GRADLEW_UNIX}
+            flags_f_array[1]=${F_GRADLEW_BAT}
+            flag_remove_gradle=1 #remove "gradle/"
+            ;;
+        T) #Total, means all
+            flags_d_array[0]=${D_BIN}
+            flags_d_array[1]=${D_GEN}
+            flags_d_array[2]=${D_BUILD}
+            flags_d_array[3]=${D_DOT_SETTINGS}
+            flags_d_array[4]=${D_DOT_IDEA}
+            flags_d_array[5]=${D_DOT_GRADLE}
+            flags_f_array[0]=${F_PROJ_PROP}
+            flags_f_array[1]=${F_LOCAL_PROP}
+            flags_f_array[2]=${F_DOT_PROJECT}
+            flags_f_array[3]=${F_DOT_CLASSPATH}
+            flags_f_array[4]=${F_STAR_DOT_IML}
+            flags_f_array[5]=${F_GRADLEW_UNIX}
+            flags_f_array[6]=${F_GRADLEW_BAT}
+            flag_remove_gradle=1 #remove "gradle/"
+            ;;
+        y) #Yes - confirmed
+            flag_skip_confirm=1
+            ;;
+        h) #Help
+            show_clean_help
+            #exit 0
+            ;;
+        *)
+            error_exit 1 "unknown option."
+        esac
+    done
+
+    # calculate directories
+    local d_filter_str=""
+    local d_tips_str=""
+    for i in "${flags_d_array[@]}" ; do
+        if [ -z "${i}" ]; then
+            continue # skip empty
+        fi
+
+        if [ -z "${d_filter_str}" ]; then
+            d_filter_str="-name '${i}'"
+            d_tips_str="${i}"
+        else
+            d_filter_str="${d_filter_str} -o -name '${i}'"
+            d_tips_str="${d_tips_str}, ${i}"
+        fi
+    done
+
+    # calculate files
+    local f_filter_str=""
+    local f_tips_str=""
+    for i in "${flags_f_array[@]}" ; do
+        if [ -z "${i}" ]; then
+            continue # skip empty
+        fi
+
+        if [ -z "${f_filter_str}" ]; then
+            f_filter_str="-name '${i}'"
+            f_tips_str="${i}"
+        else
+            f_filter_str="${f_filter_str} -o -name '${i}'"
+            f_tips_str="${f_tips_str}, ${i}"
+        fi
+    done
+
+    # ensure something to clean - "./gradle" will be cleaned
+    if [ -z "${d_filter_str}" ] && [ -z ${f_filter_str} ]; then
+        error_exit 1 "no thing to clean."
+    fi
+
+    # show tips
+    echo "Plan to delete the following in CURRENT and SUB directories:"
+    if [ ! -z "${d_filter_str}" ] || [ ! -z "${flag_remove_gradle}" ]; then
+        echo "Directories:"
+    fi
+    if [ ! -z "${d_filter_str}" ]; then
+        echo "   ${d_tips_str}"
+    fi
+    if [ ! -z "${flag_remove_gradle}" ]; then
+        echo "   ./gradle   (only the one in current directory)"
+    fi
+    if [ ! -z "${f_filter_str}" ]; then
+        echo "Files:"
+        echo "   ${f_tips_str}"
+    fi
+
+    # ask for confirmation if necessary
+    if [ -z "${flag_skip_confirm}" ]; then
+        echo ""
+        printf "Perform the deletion (y/n)? "
+        read answer_var
+        if echo "$answer_var" | grep -iq "^y" ;then
+            : # do noting
+        else
+            echo "Deletion is cancelled."
+            exit 1
+        fi
+    fi
+
+    # delete
+    one_cmd=""
+    if [ ! -z "${d_filter_str}" ]; then
+        one_cmd="find . -type d \\( ${d_filter_str} \\) -prune -exec rm -rf {} \\;"
+        eval "${one_cmd}"
+    fi
+    if [ ! -z "${flag_remove_gradle}" ]; then
+        one_cmd="rm -rf ./gradle/"
+        eval "${one_cmd}"
+    fi
+    if [ ! -z "${f_filter_str}" ]; then
+        one_cmd="find . -type f \\( ${f_filter_str} \\) -prune -exec rm -rf {} \\;"
+        eval "${one_cmd}"
+    fi
+
+    echo "Done."
+    exit 0
+}
+
+cmd_list() {
+    if [ -z "$1" ] ; then
+        show_list_help
+        exit 1
+    fi
+
+    declare -a filters_array=("" "" "")
+    local OPTIND opt
+    while getopts "ajrbh" opt; do
+        case "$opt" in
+        a)
+            filters_array[0]="*.apk"
+            ;;
+        j)
+            filters_array[1]="*.jar"
+            ;;
+        r)
+            filters_array[2]="*.aar"
+            ;;
+        b)
+            filters_array[0]="*.apk"
+            filters_array[1]="*.jar"
+            filters_array[2]="*.aar"
+            ;;
+        h)
+            show_list_help
+            exit 0
+            ;;
+        *)
+            echo "**Error: unsupported option."
+            exit 1
+            ;;
+        esac
+    done
+
+    local filter_str=""
+    for i in "${filters_array[@]}" ; do
+        if [ -z "${i}" ]; then
+            continue # skip empty
+        fi
+
+        if [ -z "${filter_str}" ]; then
+            filter_str="-name '${i}'"
+        else
+            filter_str="${filter_str} -o -name '${i}'"
+        fi
+    done
+
+    if [ -z "${filter_str}" ]; then
+        echo "**Error: no file type specified."
+        exit 1
+    fi
+
+    # run
+    one_cmd="find . -type f \\( ${filter_str} \\) -exec ls -la {} \\;"
+    eval "${one_cmd}"
+    exit $?
+}
+
+# create the build.gradle file in current directory
+func_add_build_gradle() {
+# the following build.gradle is only for single module
+cat << '__EOF' >> build.gradle
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:1.2.3'
+    }
+}
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 19
+    buildToolsVersion "22.0.1"
+
+    defaultConfig {
+        // applicationId "com.example.app1"
+        minSdkVersion 15 // Android 4.0.3
+        targetSdkVersion 19
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile 'AndroidManifest.xml'
+            java.srcDirs = ['src']
+            resources.srcDirs = ['src']
+            aidl.srcDirs = ['src']
+            renderscript.srcDirs = ['src']
+            res.srcDirs = ['res']
+            assets.srcDirs = ['assets']
+            jniLibs.srcDirs = ['libs']
+        }
+
+        // Move the tests to tests/java, tests/res, etc...
+        instrumentTest.setRoot('tests')
+
+        // Move the build types to build-types/<type>
+        debug.setRoot('build-types/debug')
+        release.setRoot('build-types/release')
+    }
+
+    buildTypes {
+        debug {
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    compile fileTree(dir: 'libs', include: '*.jar')
+}
+__EOF
+
+    return 0
+}
+
+cmd_migrate() {
+    if [ ! -f "AndroidManifest.xml" ]; then
+        error_exit 1 "it seems not a legacy Android project."
+    fi
+
+    if [ -f "build.gradle" ]; then
+        error_exit 1 "already Android Studio project."
+    fi
+
+    # generate the build.gradle
+    func_add_build_gradle
+
+cat << __EOF
+Succeed. This file was created:
+  build.gradle
+
+Notes:
+  1. Now you can open this project with Android Studio.
+     Please choose "Import project" on the Quick Start of the Welcome window.
+  2. Please configure the "build.gradle" according to your need. Reference:
+       https://developer.android.com/tools/building/configuring-gradle.html
+__EOF
+
+    exit 0
+}
+
+## dispatch command
+case $1 in
+    help|-h|--help)
+        cmd_help
+    ;;
+    clean|cl)
+        shift
+        cmd_clean "$@"
+    ;;
+    list|ls)
+        shift
+        cmd_list "$@"
+    ;;
+    migrate|mg)
+        cmd_migrate
+    ;;
+    *)
+        echo "**Error: unknown command."
+        exit 1
+    ;;
+esac
