@@ -12,6 +12,10 @@ APAC (Android Project Assistant Command-line) is a shell script, you can use it 
 * Clean Eclipse project files or Android Studio project files.
 * List the files like ***.apk**, ***.aar**, ***.jar** in your project directory.
 
+License
+=======
+Apache License, Version 2.0
+
 How to Run It
 =============
 After the installation, open a console, enter the directory, then run like this (take Cleaning Build Files for example):
